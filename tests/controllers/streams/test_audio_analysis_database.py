@@ -6,6 +6,7 @@ import logging
 import os
 import pathlib
 import sqlite3
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -25,7 +26,6 @@ from music_assistant.constants import (
 from music_assistant.controllers.streams.audio_analysis import (
     LOUDNESS_ANALYSIS_DOMAIN,
     PROVIDER_LOUDNESS_DOMAIN,
-    PROVIDER_SMART_FADES_DOMAIN,
     SMART_FADES_ANALYSIS_DOMAIN,
     SONIC_ANALYSIS_DOMAIN,
     AudioAnalysisController,
@@ -87,7 +87,7 @@ def _make_controller(
 async def test_imported_smart_fades_preserves_native_fallback(
     ctrl: AudioAnalysisController,
 ) -> None:
-    """The mixer prefers one whole imported record and keeps the native record as fallback."""
+    """The mixer prefers the imported grid and fills optional fields from native analysis."""
     await ctrl.setup_database()
     mass: Any = ctrl.mass
     source = MagicMock(spec=MusicProvider, instance_id="local--test", is_streaming_provider=False)
@@ -96,8 +96,10 @@ async def test_imported_smart_fades_preserves_native_fallback(
     )
     mass.get_provider = MagicMock(return_value=source)
     mass.get_providers = MagicMock(return_value=[smart_fades])
-    native = AudioAnalysisData(bpm=130.0, beats=[0.0, 0.25], key="C")
-    imported = AudioAnalysisData(bpm=120.0, beats=[0.0, 0.5])
+    native = AudioAnalysisData(
+        bpm=240.0, beats=[0.0, 0.25, 0.5, 0.75], downbeats=[0.0, 0.5], key="C"
+    )
+    imported = AudioAnalysisData(bpm=120.0, beats=[0.0, 0.5, 1.0, 1.5], downbeats=[0.0, 1.0])
     await ctrl.set_audio_analysis("track", source.instance_id, SMART_FADES_ANALYSIS_DOMAIN, native)
     stream = StreamDetails(
         item_id="track",
@@ -108,14 +110,16 @@ async def test_imported_smart_fades_preserves_native_fallback(
     mixer = SmartFadesMixer(MagicMock(audio_analysis=ctrl))
 
     assert await mixer._load_analyses(stream, stream) == (native, native)
-    await ctrl.set_track_smart_fades("track", source.instance_id, imported)
-    assert await mixer._load_analyses(stream, stream) == (imported, imported)
-    assert await ctrl.get_audio_analysis("track", source.instance_id) == native
-
-    await ctrl.set_audio_analysis(
-        "track", source.instance_id, PROVIDER_SMART_FADES_DOMAIN, AudioAnalysisData(bpm=120.0)
-    )
+    with pytest.raises(ValueError, match="requires tempo, beats and downbeats"):
+        await ctrl.set_track_smart_fades(
+            "track", source.instance_id, replace(imported, downbeats=None)
+        )
     assert await mixer._load_analyses(stream, stream) == (native, native)
+
+    await ctrl.set_track_smart_fades("track", source.instance_id, imported)
+    preferred = replace(imported, key=native.key)
+    assert await mixer._load_analyses(stream, stream) == (preferred, preferred)
+    assert await ctrl.get_audio_analysis("track", source.instance_id) == native
 
     await ctrl.set_track_smart_fades("track", source.instance_id, None)
     assert await mixer._load_analyses(stream, stream) == (native, native)

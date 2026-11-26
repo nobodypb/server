@@ -278,23 +278,18 @@ class SmartFadesMixer:
         Rows are returned independently so a failed smart build can still use a
         valid outgoing row to protect vocals in the standard fallback.
         """
-        get_analysis = self.streams.audio_analysis.get_audio_analysis
-
-        async def load_track(streamdetails: StreamDetails) -> AudioAnalysisData | None:
-            imported = await get_analysis(
-                streamdetails.item_id,
-                streamdetails.provider,
-                priority=(PROVIDER_SMART_FADES_DOMAIN,),
-            )
-            if imported is not None and imported.bpm and imported.beats:
-                return imported
-            return await get_analysis(
-                streamdetails.item_id,
-                streamdetails.provider,
-                priority=(SMART_FADES_ANALYSIS_DOMAIN,),
-            )
-
-        return await load_track(fade_out_streamdetails), await load_track(fade_in_streamdetails)
+        priority = (PROVIDER_SMART_FADES_DOMAIN, SMART_FADES_ANALYSIS_DOMAIN)
+        fade_out_analysis = await self.streams.audio_analysis.get_audio_analysis(
+            fade_out_streamdetails.item_id,
+            fade_out_streamdetails.provider,
+            priority=priority,
+        )
+        fade_in_analysis = await self.streams.audio_analysis.get_audio_analysis(
+            fade_in_streamdetails.item_id,
+            fade_in_streamdetails.provider,
+            priority=priority,
+        )
+        return fade_out_analysis, fade_in_analysis
 
     @staticmethod
     def _get_vocal_retention_bytes(

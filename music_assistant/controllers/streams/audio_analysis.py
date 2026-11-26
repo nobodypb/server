@@ -1127,13 +1127,18 @@ class AudioAnalysisController(AudioAnalysisDatabaseMixin):
 
         :param item_id: Provider-native track ID.
         :param provider_instance_id_or_domain: Music provider instance ID or domain.
-        :param analysis: Completed tempo and beat data, or None to remove the import.
+        :param analysis: Completed tempo, beats and downbeats, or None to remove the import.
         """
         if not self._database_ready:
             return
         if analysis is not None:
-            if not analysis.bpm or analysis.bpm <= 0 or not analysis.beats:
-                msg = "Imported Smart Fades analysis requires tempo and beats"
+            if (
+                not analysis.bpm
+                or analysis.bpm <= 0
+                or not analysis.beats
+                or not analysis.downbeats
+            ):
+                msg = "Imported Smart Fades analysis requires tempo, beats and downbeats"
                 raise ValueError(msg)
             await self.set_audio_analysis(
                 item_id, provider_instance_id_or_domain, PROVIDER_SMART_FADES_DOMAIN, analysis

@@ -259,6 +259,7 @@ A provider can report what plays in a live source or on a radio station with `Au
 - Produced by the `smart_fades` audio analysis provider (`providers/smart_fades/`), for music tracks only (`MediaType.TRACK`): live through `AudioAnalysisController.start_analysis()` while a track streams, and by the background scan for local files
 - Stores the whole track's beats, downbeats, BPM, meter, key, RMS energy, four band RMS envelopes (`band_rms_*`) and FireRed vocal activity in `audio_analysis.db`; the provider's README describes the models
 - For each track, the mixer calls `get_audio_analysis()` with `provider_smart_fades` before `smart_fades` in its priority list. Imported fields take precedence and the native analysis supplies any remaining fields.
+- The meter follows the imported beat grid. Native energy, spectral, and vocal profiles supplement the import only when both track durations are known and differ by at most 50 ms.
 
 An audio analysis provider can import a completed result with `set_track_smart_fades()` when a buffer starts and decline the PCM session. The import must contain tempo, beats, and downbeats from the same beat grid. Import-only providers can decline streams outside their scope in `start_analysis()`.
 

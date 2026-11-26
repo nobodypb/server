@@ -68,6 +68,7 @@ PROVIDER_SMART_FADES_DOMAIN = "provider_smart_fades"
 # Playback normalization prefers provider-supplied loudness over the builtin measurement.
 LOUDNESS_PROVIDER_PRIORITY = (PROVIDER_LOUDNESS_DOMAIN, LOUDNESS_ANALYSIS_DOMAIN)
 SMART_FADES_ANALYSIS_DOMAIN = "smart_fades"
+SMART_FADES_PROFILE_DURATION_TOLERANCE_SECONDS = 0.05
 SONIC_ANALYSIS_DOMAIN = "sonic_analysis"
 # AA domains trusted for frontend-facing track data (bpm/key/energy/waveform), authoritative
 # first. The loudness providers precede Sonic Analysis, whose loudness is an RMS approximation.
@@ -225,6 +226,30 @@ def _merged_from_rows(
         if (row_data := _parse_row(row, unparsable_ids, arrays=arrays)) is None:
             continue
         by_domain[domain] = row_data
+    if (
+        (imported := by_domain.get(PROVIDER_SMART_FADES_DOMAIN)) is not None
+        and (native := by_domain.get(SMART_FADES_ANALYSIS_DOMAIN)) is not None
+        and wanted.index(PROVIDER_SMART_FADES_DOMAIN) < wanted.index(SMART_FADES_ANALYSIS_DOMAIN)
+    ):
+        # Meter describes the chosen beat grid, even when the import leaves it unknown.
+        native.beats_per_bar = None
+        native_duration = native.duration
+        imported_duration = imported.duration
+        # The native profiles use equal-width bins over the native track duration.
+        if not (
+            native_duration is not None
+            and imported_duration is not None
+            and min(native_duration, imported_duration) > 0
+            and abs(native_duration - imported_duration)
+            <= SMART_FADES_PROFILE_DURATION_TOLERANCE_SECONDS
+        ):
+            native.rms_energy = None
+            native.spectral_centroid = None
+            native.vocal_activity = None
+            native.band_rms_low = None
+            native.band_rms_low_mid = None
+            native.band_rms_mid = None
+            native.band_rms_high = None
     for domain in reversed(wanted):
         if (row_data := by_domain.get(domain)) is not None:
             merged.update(row_data)

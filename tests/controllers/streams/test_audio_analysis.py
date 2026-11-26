@@ -31,6 +31,7 @@ from music_assistant.controllers.streams.audio_analysis import (
     LOUDNESS_ANALYSIS_DOMAIN,
     LOUDNESS_PROVIDER_PRIORITY,
     PROVIDER_LOUDNESS_DOMAIN,
+    PROVIDER_SMART_FADES_DOMAIN,
     REALTIME_ANALYSIS_MAX_SESSIONS,
     SMART_FADES_ANALYSIS_DOMAIN,
     SONIC_ANALYSIS_DOMAIN,
@@ -1083,6 +1084,72 @@ def test_merged_from_rows_multi_priority_first_listed_wins_and_merges() -> None:
     assert merged.loudness_integrated == -7.5  # first-listed wins the conflict
     assert merged.energy == 0.5  # non-conflicting field from sonic still merged in
     assert merged.bpm == 120  # and from smart_fades
+
+
+@pytest.mark.parametrize("imported_meter", [None, 3])
+def test_merged_smart_fades_keeps_meter_with_imported_grid(imported_meter: int | None) -> None:
+    """A native meter cannot fill in an unknown meter for the imported grid."""
+    priority = (PROVIDER_SMART_FADES_DOMAIN, SMART_FADES_ANALYSIS_DOMAIN)
+    downbeats = [0.0, 1.5]
+    rows = [
+        _aa_row(SMART_FADES_ANALYSIS_DOMAIN, 1, beats_per_bar=4, downbeats=[0.0, 2.0]),
+        _aa_row(
+            PROVIDER_SMART_FADES_DOMAIN,
+            2,
+            bpm=120,
+            beats=[0.0, 0.5, 1.0, 1.5],
+            downbeats=downbeats,
+            beats_per_bar=imported_meter,
+        ),
+    ]
+    merged = _merged_from_rows(rows, set(priority), priority=priority)
+    assert merged is not None
+    assert merged.downbeats == downbeats
+    assert merged.beats_per_bar == imported_meter
+
+
+@pytest.mark.parametrize(
+    ("native_duration", "imported_duration", "compatible"),
+    [
+        (200.0, 200.0, True),
+        (200.0, 200.04, True),
+        (200.0, 200.06, False),
+        (200.0, 201.0, False),
+        (None, 200.0, False),
+        (200.0, None, False),
+    ],
+)
+def test_merged_smart_fades_requires_matching_duration_for_native_profiles(
+    native_duration: float | None, imported_duration: float | None, compatible: bool
+) -> None:
+    """Only read native profile bins using an import with a compatible duration."""
+    priority = (PROVIDER_SMART_FADES_DOMAIN, SMART_FADES_ANALYSIS_DOMAIN)
+    profiles = {
+        "rms_energy": [0.25],
+        "spectral_centroid": [1000.0],
+        "vocal_activity": [0.5],
+        "band_rms_low": [0.25],
+        "band_rms_low_mid": [0.25],
+        "band_rms_mid": [0.25],
+        "band_rms_high": [0.25],
+    }
+    rows = [
+        _aa_row(SMART_FADES_ANALYSIS_DOMAIN, 1, duration=native_duration, key="C", **profiles),
+        _aa_row(
+            PROVIDER_SMART_FADES_DOMAIN,
+            2,
+            duration=imported_duration,
+            bpm=120,
+            beats=[0.0, 0.5, 1.0, 1.5],
+            downbeats=[0.0, 1.5],
+        ),
+    ]
+    merged = _merged_from_rows(rows, set(priority), priority=priority)
+    assert merged is not None
+    assert merged.key == "C"
+    assert merged.duration == (imported_duration or native_duration)
+    for field, values in profiles.items():
+        assert getattr(merged, field) == (values if compatible else None)
 
 
 def test_merged_from_rows_priority_domain_not_available_is_excluded() -> None:

@@ -105,8 +105,7 @@ async def test_imported_smart_fades_preserves_native_fallback(
         media_type=MediaType.TRACK,
         audio_format=AudioFormat(content_type=ContentType.FLAC),
     )
-    ctrl.streams.audio_analysis = ctrl
-    mixer = SmartFadesMixer(ctrl.streams)
+    mixer = SmartFadesMixer(MagicMock(audio_analysis=ctrl))
 
     assert await mixer._load_analyses(stream, stream) == (native, native)
     await ctrl.set_track_smart_fades("track", source.instance_id, imported)

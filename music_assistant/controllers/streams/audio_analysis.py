@@ -64,6 +64,7 @@ LOUDNESS_ANALYSIS_DOMAIN = "loudness_analysis"
 # Virtual AA domain for loudness supplied by music providers (tags, ReplayGain). No AA
 # provider backs it, so it bypasses the provider-availability gate when merging rows.
 PROVIDER_LOUDNESS_DOMAIN = "provider_loudness"
+PROVIDER_SMART_FADES_DOMAIN = "provider_smart_fades"
 # Playback normalization prefers provider-supplied loudness over the builtin measurement.
 LOUDNESS_PROVIDER_PRIORITY = (PROVIDER_LOUDNESS_DOMAIN, LOUDNESS_ANALYSIS_DOMAIN)
 SMART_FADES_ANALYSIS_DOMAIN = "smart_fades"
@@ -864,6 +865,8 @@ class AudioAnalysisController(AudioAnalysisDatabaseMixin):
         provider_instance_id_or_domain: str,
         media_type: MediaType = MediaType.TRACK,
         priority: tuple[str, ...] | None = None,
+        *,
+        prefer_provider_smart_fades: bool = False,
     ) -> AudioAnalysisData | None:
         """
         Get merged audio analysis data for a track.
@@ -881,6 +884,7 @@ class AudioAnalysisController(AudioAnalysisDatabaseMixin):
             and the first-listed domain wins each per-field conflict. Use this when a field
             (e.g. loudness_integrated) is written by several providers with different
             semantics, so the authoritative source is selected.
+        :param prefer_provider_smart_fades: Prefer a complete imported result for mixing.
         """
         if not self._database_ready:
             return None
@@ -902,7 +906,16 @@ class AudioAnalysisController(AudioAnalysisDatabaseMixin):
 
         available_aa_domains = self._available_aa_domains()
         unparsable_ids: list[Any] = []
-        merged = _merged_from_rows(rows, available_aa_domains, priority, unparsable_ids)
+        imported = None
+        if prefer_provider_smart_fades:
+            imported = _merged_from_rows(
+                rows, {PROVIDER_SMART_FADES_DOMAIN}, (PROVIDER_SMART_FADES_DOMAIN,), unparsable_ids
+            )
+        merged = (
+            imported
+            if imported is not None and imported.bpm and imported.beats
+            else _merged_from_rows(rows, available_aa_domains, priority, unparsable_ids)
+        )
         # corrupt rows would otherwise block re-analysis forever (their stored
         # analysis_version still gates new sessions), so drop them right away
         for row_id in unparsable_ids:
@@ -1110,6 +1123,42 @@ class AudioAnalysisController(AudioAnalysisDatabaseMixin):
             aa_provider_domain=PROVIDER_LOUDNESS_DOMAIN,
             analysis=analysis,
             media_type=media_type,
+        )
+
+    async def set_track_smart_fades(
+        self,
+        item_id: str,
+        provider_instance_id_or_domain: str,
+        analysis: AudioAnalysisData | None,
+    ) -> None:
+        """
+        Store a precomputed Smart Fades result separately from the native analysis.
+
+        :param item_id: Provider-native track ID.
+        :param provider_instance_id_or_domain: Music provider instance ID or domain.
+        :param analysis: Completed tempo and beat data, or None to remove the import.
+        """
+        if not self._database_ready:
+            return
+        if analysis is not None:
+            if not analysis.bpm or analysis.bpm <= 0 or not analysis.beats:
+                msg = "Imported Smart Fades analysis requires tempo and beats"
+                raise ValueError(msg)
+            await self.set_audio_analysis(
+                item_id, provider_instance_id_or_domain, PROVIDER_SMART_FADES_DOMAIN, analysis
+            )
+            return
+        provider_key = self._analysis_provider_key(provider_instance_id_or_domain)
+        if provider_key is None:
+            return
+        await self.database.delete(
+            AA_TABLE_ANALYSIS,
+            {
+                "item_id": item_id,
+                "provider": provider_key,
+                "media_type": MediaType.TRACK.value,
+                "aa_provider_domain": PROVIDER_SMART_FADES_DOMAIN,
+            },
         )
 
     async def get_extra_data_for_album_tracks(
@@ -1431,7 +1480,7 @@ class AudioAnalysisController(AudioAnalysisDatabaseMixin):
 
     async def _run_background_scan(self) -> None:
         """Run the scan as decode-once-fan-out streaming over candidate tracks."""
-        providers = self.providers
+        providers = [provider for provider in self.providers if provider.supports_background_scan]
         if not providers:
             return
 

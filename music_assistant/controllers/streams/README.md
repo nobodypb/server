@@ -260,6 +260,8 @@ A provider can report what plays in a live source or on a radio station with `Au
 - Stores the whole track's beats, downbeats, BPM, meter, key, RMS energy, four band RMS envelopes (`band_rms_*`) and FireRed vocal activity in `audio_analysis.db`; the provider's README describes the models
 - The mixer reads both rows with `get_audio_analysis()` at `SMART_FADES_ANALYSIS_DOMAIN` priority
 
+An audio analysis provider can import a completed result with `set_track_smart_fades()` when a buffer starts, decline the PCM session and opt out of library scans with `supports_background_scan = False`. The mixer prefers the complete imported record and uses native Smart Fades analysis when the import is missing. Importers share the `provider_smart_fades` storage domain, separate from the native `smart_fades` domain.
+
 ## Smart Fades
 
 Smart fades mix the outgoing track's held-back tail (up to 45 seconds) with the incoming track's head in one ffmpeg process, in both flow mode (continuous stream) and per-item mode (gapless playback). `SmartFadesMixer.build()` picks the fade for each boundary from the crossfade mode:

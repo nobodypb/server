@@ -279,11 +279,13 @@ class SmartFadesMixer:
             fade_out_streamdetails.item_id,
             fade_out_streamdetails.provider,
             priority=(SMART_FADES_ANALYSIS_DOMAIN,),
+            prefer_provider_smart_fades=True,
         )
         fade_in_analysis = await self.streams.audio_analysis.get_audio_analysis(
             fade_in_streamdetails.item_id,
             fade_in_streamdetails.provider,
             priority=(SMART_FADES_ANALYSIS_DOMAIN,),
+            prefer_provider_smart_fades=True,
         )
         return fade_out_analysis, fade_in_analysis
 

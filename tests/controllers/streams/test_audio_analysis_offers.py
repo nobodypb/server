@@ -117,7 +117,9 @@ async def test_background_scan_feeds_only_providers_that_declared_tracks(
     """The scan streams a track only to the providers that declared tracks."""
     tracks = _aa_provider("tracks")
     radio_only = _aa_provider("radio_only", frozenset({MediaType.RADIO}))
-    providers = [tracks, radio_only]
+    importer = _aa_provider("importer")
+    importer.supports_background_scan = False
+    providers = [tracks, radio_only, importer]
     registry.update({p.instance_id: p for p in providers})
     registry[FILESYSTEM_ID].get_stream_details = AsyncMock(
         return_value=_streamdetails(MediaType.TRACK)
@@ -153,3 +155,4 @@ async def test_background_scan_feeds_only_providers_that_declared_tracks(
     assert tracks.process_pcm_chunk.await_count == len(chunks)
     radio_only.start_analysis.assert_not_awaited()
     radio_only.process_pcm_chunk.assert_not_awaited()
+    importer.start_analysis.assert_not_awaited()

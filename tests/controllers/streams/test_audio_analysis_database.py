@@ -81,6 +81,39 @@ def _make_controller(
     return AudioAnalysisController(streams)
 
 
+async def test_imported_smart_fades_preserves_native_fallback(
+    ctrl: AudioAnalysisController,
+) -> None:
+    """The mixer prefers one whole imported record and keeps the native record as fallback."""
+    await ctrl.setup_database()
+    mass: Any = ctrl.mass
+    source = MagicMock(spec=MusicProvider, instance_id="local--test", is_streaming_provider=False)
+    smart_fades = MagicMock(
+        spec=AudioAnalysisProvider, domain=SMART_FADES_ANALYSIS_DOMAIN, available=True
+    )
+    mass.get_provider = MagicMock(return_value=source)
+    mass.get_providers = MagicMock(return_value=[smart_fades])
+    native = AudioAnalysisData(bpm=130.0, beats=[0.0, 0.25], key="C")
+    imported = AudioAnalysisData(bpm=120.0, beats=[0.0, 0.5])
+    await ctrl.set_audio_analysis("track", source.instance_id, SMART_FADES_ANALYSIS_DOMAIN, native)
+
+    async def mixer_result() -> AudioAnalysisData | None:
+        return await ctrl.get_audio_analysis(
+            "track",
+            source.instance_id,
+            priority=(SMART_FADES_ANALYSIS_DOMAIN,),
+            prefer_provider_smart_fades=True,
+        )
+
+    assert await mixer_result() == native
+    await ctrl.set_track_smart_fades("track", source.instance_id, imported)
+    assert await mixer_result() == imported
+    assert await ctrl.get_audio_analysis("track", source.instance_id) == native
+
+    await ctrl.set_track_smart_fades("track", source.instance_id, None)
+    assert await mixer_result() == native
+
+
 async def _table_names(db: DatabaseConnection) -> set[str]:
     rows = await db.get_rows_from_query(
         "SELECT name FROM main.sqlite_master WHERE type = 'table'", limit=0

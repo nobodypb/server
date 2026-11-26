@@ -13,6 +13,7 @@ import pytest
 from music_assistant_models.enums import ContentType, MediaType
 from music_assistant_models.errors import ProviderUnavailableError
 from music_assistant_models.media_items import AudioFormat, ProviderMapping, Track
+from music_assistant_models.streamdetails import StreamDetails
 
 import music_assistant.controllers.streams.audio_analysis as audio_analysis_mod
 from music_assistant.constants import (
@@ -24,6 +25,7 @@ from music_assistant.constants import (
 from music_assistant.controllers.streams.audio_analysis import (
     LOUDNESS_ANALYSIS_DOMAIN,
     PROVIDER_LOUDNESS_DOMAIN,
+    PROVIDER_SMART_FADES_DOMAIN,
     SMART_FADES_ANALYSIS_DOMAIN,
     SONIC_ANALYSIS_DOMAIN,
     AudioAnalysisController,
@@ -35,6 +37,7 @@ from music_assistant.controllers.streams.constants import (
     AA_TABLE_FAILURES,
     AA_TABLE_SETTINGS,
 )
+from music_assistant.controllers.streams.smart_fades.mixer import SmartFadesMixer
 from music_assistant.helpers.database import DatabaseConnection
 from music_assistant.models.audio_analysis import AudioAnalysisData
 from music_assistant.models.audio_analysis_provider import AudioAnalysisProvider
@@ -96,22 +99,27 @@ async def test_imported_smart_fades_preserves_native_fallback(
     native = AudioAnalysisData(bpm=130.0, beats=[0.0, 0.25], key="C")
     imported = AudioAnalysisData(bpm=120.0, beats=[0.0, 0.5])
     await ctrl.set_audio_analysis("track", source.instance_id, SMART_FADES_ANALYSIS_DOMAIN, native)
+    stream = StreamDetails(
+        item_id="track",
+        provider=source.instance_id,
+        media_type=MediaType.TRACK,
+        audio_format=AudioFormat(content_type=ContentType.FLAC),
+    )
+    ctrl.streams.audio_analysis = ctrl
+    mixer = SmartFadesMixer(ctrl.streams)
 
-    async def mixer_result() -> AudioAnalysisData | None:
-        return await ctrl.get_audio_analysis(
-            "track",
-            source.instance_id,
-            priority=(SMART_FADES_ANALYSIS_DOMAIN,),
-            prefer_provider_smart_fades=True,
-        )
-
-    assert await mixer_result() == native
+    assert await mixer._load_analyses(stream, stream) == (native, native)
     await ctrl.set_track_smart_fades("track", source.instance_id, imported)
-    assert await mixer_result() == imported
+    assert await mixer._load_analyses(stream, stream) == (imported, imported)
     assert await ctrl.get_audio_analysis("track", source.instance_id) == native
 
+    await ctrl.set_audio_analysis(
+        "track", source.instance_id, PROVIDER_SMART_FADES_DOMAIN, AudioAnalysisData(bpm=120.0)
+    )
+    assert await mixer._load_analyses(stream, stream) == (native, native)
+
     await ctrl.set_track_smart_fades("track", source.instance_id, None)
-    assert await mixer_result() == native
+    assert await mixer._load_analyses(stream, stream) == (native, native)
 
 
 async def _table_names(db: DatabaseConnection) -> set[str]:

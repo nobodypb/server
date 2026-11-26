@@ -10,7 +10,10 @@ from typing import TYPE_CHECKING, cast
 
 from music_assistant_models.enums import CrossfadeMode
 
-from music_assistant.controllers.streams.audio_analysis import SMART_FADES_ANALYSIS_DOMAIN
+from music_assistant.controllers.streams.audio_analysis import (
+    PROVIDER_SMART_FADES_DOMAIN,
+    SMART_FADES_ANALYSIS_DOMAIN,
+)
 from music_assistant.controllers.streams.smart_fades.fades import (
     SmartCrossFade,
     SmartFade,
@@ -275,19 +278,23 @@ class SmartFadesMixer:
         Rows are returned independently so a failed smart build can still use a
         valid outgoing row to protect vocals in the standard fallback.
         """
-        fade_out_analysis = await self.streams.audio_analysis.get_audio_analysis(
-            fade_out_streamdetails.item_id,
-            fade_out_streamdetails.provider,
-            priority=(SMART_FADES_ANALYSIS_DOMAIN,),
-            prefer_provider_smart_fades=True,
-        )
-        fade_in_analysis = await self.streams.audio_analysis.get_audio_analysis(
-            fade_in_streamdetails.item_id,
-            fade_in_streamdetails.provider,
-            priority=(SMART_FADES_ANALYSIS_DOMAIN,),
-            prefer_provider_smart_fades=True,
-        )
-        return fade_out_analysis, fade_in_analysis
+        get_analysis = self.streams.audio_analysis.get_audio_analysis
+
+        async def load_track(streamdetails: StreamDetails) -> AudioAnalysisData | None:
+            imported = await get_analysis(
+                streamdetails.item_id,
+                streamdetails.provider,
+                priority=(PROVIDER_SMART_FADES_DOMAIN,),
+            )
+            if imported is not None and imported.bpm and imported.beats:
+                return imported
+            return await get_analysis(
+                streamdetails.item_id,
+                streamdetails.provider,
+                priority=(SMART_FADES_ANALYSIS_DOMAIN,),
+            )
+
+        return await load_track(fade_out_streamdetails), await load_track(fade_in_streamdetails)
 
     @staticmethod
     def _get_vocal_retention_bytes(

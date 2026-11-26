@@ -865,15 +865,14 @@ class AudioAnalysisController(AudioAnalysisDatabaseMixin):
         provider_instance_id_or_domain: str,
         media_type: MediaType = MediaType.TRACK,
         priority: tuple[str, ...] | None = None,
-        *,
-        prefer_provider_smart_fades: bool = False,
     ) -> AudioAnalysisData | None:
         """
         Get merged audio analysis data for a track.
 
         Only rows from currently available AA providers are included; the virtual
-        provider_loudness domain is always included. Rows that fail to parse are
-        deleted, so the track can be re-analyzed.
+        provider_loudness domain is always included. Imported Smart Fades results
+        are available when their domain is explicitly requested in priority.
+        Rows that fail to parse are deleted, so the track can be re-analyzed.
 
         :param item_id: Provider-native item ID from streamdetails.item_id.
         :param provider_instance_id_or_domain: Music provider instance ID or domain.
@@ -884,7 +883,6 @@ class AudioAnalysisController(AudioAnalysisDatabaseMixin):
             and the first-listed domain wins each per-field conflict. Use this when a field
             (e.g. loudness_integrated) is written by several providers with different
             semantics, so the authoritative source is selected.
-        :param prefer_provider_smart_fades: Prefer a complete imported result for mixing.
         """
         if not self._database_ready:
             return None
@@ -905,17 +903,10 @@ class AudioAnalysisController(AudioAnalysisDatabaseMixin):
             return None
 
         available_aa_domains = self._available_aa_domains()
+        if priority and PROVIDER_SMART_FADES_DOMAIN in priority:
+            available_aa_domains.add(PROVIDER_SMART_FADES_DOMAIN)
         unparsable_ids: list[Any] = []
-        imported = None
-        if prefer_provider_smart_fades:
-            imported = _merged_from_rows(
-                rows, {PROVIDER_SMART_FADES_DOMAIN}, (PROVIDER_SMART_FADES_DOMAIN,), unparsable_ids
-            )
-        merged = (
-            imported
-            if imported is not None and imported.bpm and imported.beats
-            else _merged_from_rows(rows, available_aa_domains, priority, unparsable_ids)
-        )
+        merged = _merged_from_rows(rows, available_aa_domains, priority, unparsable_ids)
         # corrupt rows would otherwise block re-analysis forever (their stored
         # analysis_version still gates new sessions), so drop them right away
         for row_id in unparsable_ids:
@@ -1480,7 +1471,7 @@ class AudioAnalysisController(AudioAnalysisDatabaseMixin):
 
     async def _run_background_scan(self) -> None:
         """Run the scan as decode-once-fan-out streaming over candidate tracks."""
-        providers = [provider for provider in self.providers if provider.supports_background_scan]
+        providers = self.providers
         if not providers:
             return
 

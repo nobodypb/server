@@ -105,9 +105,6 @@ class AudioAnalysisProvider(Provider):
     # The media types this provider is offered.
     media_types: frozenset[MediaType] = frozenset({MediaType.TRACK})
 
-    # Providers that only import existing results can opt out of library scans.
-    supports_background_scan: bool = True
-
     # Maximum track duration (seconds) this provider will analyze; longer tracks are skipped by
     # start_analysis. None means no limit. Providers that accumulate whole-track state set it.
     max_analysis_duration: float | None = None

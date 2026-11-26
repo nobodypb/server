@@ -10,7 +10,10 @@ from typing import TYPE_CHECKING, cast
 
 from music_assistant_models.enums import CrossfadeMode
 
-from music_assistant.controllers.streams.audio_analysis import SMART_FADES_ANALYSIS_DOMAIN
+from music_assistant.controllers.streams.audio_analysis import (
+    PROVIDER_SMART_FADES_DOMAIN,
+    SMART_FADES_ANALYSIS_DOMAIN,
+)
 from music_assistant.controllers.streams.smart_fades.fades import (
     SmartCrossFade,
     SmartFade,
@@ -275,15 +278,16 @@ class SmartFadesMixer:
         Rows are returned independently so a failed smart build can still use a
         valid outgoing row to protect vocals in the standard fallback.
         """
+        priority = (PROVIDER_SMART_FADES_DOMAIN, SMART_FADES_ANALYSIS_DOMAIN)
         fade_out_analysis = await self.streams.audio_analysis.get_audio_analysis(
             fade_out_streamdetails.item_id,
             fade_out_streamdetails.provider,
-            priority=(SMART_FADES_ANALYSIS_DOMAIN,),
+            priority=priority,
         )
         fade_in_analysis = await self.streams.audio_analysis.get_audio_analysis(
             fade_in_streamdetails.item_id,
             fade_in_streamdetails.provider,
-            priority=(SMART_FADES_ANALYSIS_DOMAIN,),
+            priority=priority,
         )
         return fade_out_analysis, fade_in_analysis
 

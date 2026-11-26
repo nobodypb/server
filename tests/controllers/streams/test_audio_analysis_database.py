@@ -6,6 +6,7 @@ import logging
 import os
 import pathlib
 import sqlite3
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -13,6 +14,7 @@ import pytest
 from music_assistant_models.enums import ContentType, MediaType
 from music_assistant_models.errors import ProviderUnavailableError
 from music_assistant_models.media_items import AudioFormat, ProviderMapping, Track
+from music_assistant_models.streamdetails import StreamDetails
 
 import music_assistant.controllers.streams.audio_analysis as audio_analysis_mod
 from music_assistant.constants import (
@@ -35,6 +37,7 @@ from music_assistant.controllers.streams.constants import (
     AA_TABLE_FAILURES,
     AA_TABLE_SETTINGS,
 )
+from music_assistant.controllers.streams.smart_fades.mixer import SmartFadesMixer
 from music_assistant.helpers.database import DatabaseConnection
 from music_assistant.models.audio_analysis import AudioAnalysisData
 from music_assistant.models.audio_analysis_provider import AudioAnalysisProvider
@@ -79,6 +82,47 @@ def _make_controller(
     # a real logger, so self.logger (mass.logger.getChild(...)) propagates to caplog
     mass.logger = logging.getLogger("test_audio_analysis_database")
     return AudioAnalysisController(streams)
+
+
+async def test_imported_smart_fades_preserves_native_fallback(
+    ctrl: AudioAnalysisController,
+) -> None:
+    """The mixer prefers the imported grid and fills optional fields from native analysis."""
+    await ctrl.setup_database()
+    mass: Any = ctrl.mass
+    source = MagicMock(spec=MusicProvider, instance_id="local--test", is_streaming_provider=False)
+    smart_fades = MagicMock(
+        spec=AudioAnalysisProvider, domain=SMART_FADES_ANALYSIS_DOMAIN, available=True
+    )
+    mass.get_provider = MagicMock(return_value=source)
+    mass.get_providers = MagicMock(return_value=[smart_fades])
+    native = AudioAnalysisData(
+        bpm=240.0, beats=[0.0, 0.25, 0.5, 0.75], downbeats=[0.0, 0.5], key="C"
+    )
+    imported = AudioAnalysisData(bpm=120.0, beats=[0.0, 0.5, 1.0, 1.5], downbeats=[0.0, 1.0])
+    await ctrl.set_audio_analysis("track", source.instance_id, SMART_FADES_ANALYSIS_DOMAIN, native)
+    stream = StreamDetails(
+        item_id="track",
+        provider=source.instance_id,
+        media_type=MediaType.TRACK,
+        audio_format=AudioFormat(content_type=ContentType.FLAC),
+    )
+    mixer = SmartFadesMixer(MagicMock(audio_analysis=ctrl))
+
+    assert await mixer._load_analyses(stream, stream) == (native, native)
+    with pytest.raises(ValueError, match="requires tempo, beats and downbeats"):
+        await ctrl.set_track_smart_fades(
+            "track", source.instance_id, replace(imported, downbeats=None)
+        )
+    assert await mixer._load_analyses(stream, stream) == (native, native)
+
+    await ctrl.set_track_smart_fades("track", source.instance_id, imported)
+    preferred = replace(imported, key=native.key)
+    assert await mixer._load_analyses(stream, stream) == (preferred, preferred)
+    assert await ctrl.get_audio_analysis("track", source.instance_id) == native
+
+    await ctrl.set_track_smart_fades("track", source.instance_id, None)
+    assert await mixer._load_analyses(stream, stream) == (native, native)
 
 
 async def _table_names(db: DatabaseConnection) -> set[str]:

@@ -64,6 +64,7 @@ LOUDNESS_ANALYSIS_DOMAIN = "loudness_analysis"
 # Virtual AA domain for loudness supplied by music providers (tags, ReplayGain). No AA
 # provider backs it, so it bypasses the provider-availability gate when merging rows.
 PROVIDER_LOUDNESS_DOMAIN = "provider_loudness"
+PROVIDER_SMART_FADES_DOMAIN = "provider_smart_fades"
 # Playback normalization prefers provider-supplied loudness over the builtin measurement.
 LOUDNESS_PROVIDER_PRIORITY = (PROVIDER_LOUDNESS_DOMAIN, LOUDNESS_ANALYSIS_DOMAIN)
 SMART_FADES_ANALYSIS_DOMAIN = "smart_fades"
@@ -869,8 +870,9 @@ class AudioAnalysisController(AudioAnalysisDatabaseMixin):
         Get merged audio analysis data for a track.
 
         Only rows from currently available AA providers are included; the virtual
-        provider_loudness domain is always included. Rows that fail to parse are
-        deleted, so the track can be re-analyzed.
+        provider_loudness domain is always included. Imported Smart Fades results
+        are available when their domain is explicitly requested in priority.
+        Rows that fail to parse are deleted, so the track can be re-analyzed.
 
         :param item_id: Provider-native item ID from streamdetails.item_id.
         :param provider_instance_id_or_domain: Music provider instance ID or domain.
@@ -901,6 +903,8 @@ class AudioAnalysisController(AudioAnalysisDatabaseMixin):
             return None
 
         available_aa_domains = self._available_aa_domains()
+        if priority and PROVIDER_SMART_FADES_DOMAIN in priority:
+            available_aa_domains.add(PROVIDER_SMART_FADES_DOMAIN)
         unparsable_ids: list[Any] = []
         merged = _merged_from_rows(rows, available_aa_domains, priority, unparsable_ids)
         # corrupt rows would otherwise block re-analysis forever (their stored
@@ -1110,6 +1114,47 @@ class AudioAnalysisController(AudioAnalysisDatabaseMixin):
             aa_provider_domain=PROVIDER_LOUDNESS_DOMAIN,
             analysis=analysis,
             media_type=media_type,
+        )
+
+    async def set_track_smart_fades(
+        self,
+        item_id: str,
+        provider_instance_id_or_domain: str,
+        analysis: AudioAnalysisData | None,
+    ) -> None:
+        """
+        Store a precomputed Smart Fades result separately from the native analysis.
+
+        :param item_id: Provider-native track ID.
+        :param provider_instance_id_or_domain: Music provider instance ID or domain.
+        :param analysis: Completed tempo, beats and downbeats, or None to remove the import.
+        """
+        if not self._database_ready:
+            return
+        if analysis is not None:
+            if (
+                not analysis.bpm
+                or analysis.bpm <= 0
+                or not analysis.beats
+                or not analysis.downbeats
+            ):
+                msg = "Imported Smart Fades analysis requires tempo, beats and downbeats"
+                raise ValueError(msg)
+            await self.set_audio_analysis(
+                item_id, provider_instance_id_or_domain, PROVIDER_SMART_FADES_DOMAIN, analysis
+            )
+            return
+        provider_key = self._analysis_provider_key(provider_instance_id_or_domain)
+        if provider_key is None:
+            return
+        await self.database.delete(
+            AA_TABLE_ANALYSIS,
+            {
+                "item_id": item_id,
+                "provider": provider_key,
+                "media_type": MediaType.TRACK.value,
+                "aa_provider_domain": PROVIDER_SMART_FADES_DOMAIN,
+            },
         )
 
     async def get_extra_data_for_album_tracks(
